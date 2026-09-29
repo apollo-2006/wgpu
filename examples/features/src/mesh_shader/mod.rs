@@ -8,7 +8,45 @@ impl crate::framework::Example for Example {
         device: &wgpu::Device,
         _queue: &wgpu::Queue,
     ) -> Self {
-        let shader = device.create_shader_module(wgpu::include_wgsl!("shader.wgsl"));
+        // DIAGNOSTIC for #9719: MESH_SPV=a loads naga's SPIR-V for this shader as-is,
+        // MESH_SPV=b loads the same module with the explicit layout decorations removed
+        // (the #7696 / VUID-StandaloneSpirv-None-10684 ones). Unset = normal WGSL path.
+        let shader = match std::env::var("MESH_SPV").as_deref() {
+            Ok(which @ ("a" | "b")) => {
+                let bytes: &[u8] = if which == "a" {
+                    include_bytes!("layout_test_a.spv")
+                } else {
+                    include_bytes!("layout_test_b.spv")
+                };
+                let words: Vec<u32> = bytes
+                    .chunks_exact(4)
+                    .map(|c| u32::from_le_bytes(c.try_into().unwrap()))
+                    .collect();
+                println!("mesh_shader: using passthrough SPIR-V {which}");
+                unsafe {
+                    device.create_shader_module_passthrough(wgpu::ShaderModuleDescriptorPassthrough {
+                        label: Some("layout test"),
+                        entry_points: std::borrow::Cow::Borrowed(&[
+                            wgpu::PassthroughShaderEntryPoint {
+                                name: std::borrow::Cow::Borrowed("ts_main"),
+                                workgroup_size: (1, 1, 1),
+                            },
+                            wgpu::PassthroughShaderEntryPoint {
+                                name: std::borrow::Cow::Borrowed("ms_main"),
+                                workgroup_size: (1, 1, 1),
+                            },
+                            wgpu::PassthroughShaderEntryPoint {
+                                name: std::borrow::Cow::Borrowed("fs_main"),
+                                workgroup_size: (0, 0, 0),
+                            },
+                        ]),
+                        spirv: Some(std::borrow::Cow::Owned(words)),
+                        ..Default::default()
+                    })
+                }
+            }
+            _ => device.create_shader_module(wgpu::include_wgsl!("shader.wgsl")),
+        };
         let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: None,
             bind_group_layouts: &[],
