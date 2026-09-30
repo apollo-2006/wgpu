@@ -45,7 +45,30 @@ impl crate::framework::Example for Example {
                     })
                 }
             }
+            // MESH_CHECKS=0 turns off the task dispatch and primitive index checks naga adds.
+            _ if std::env::var("MESH_CHECKS").as_deref() == Ok("0") => {
+                println!("mesh_shader: mesh runtime checks off");
+                unsafe {
+                    device.create_shader_module_trusted(
+                        wgpu::include_wgsl!("shader.wgsl"),
+                        wgpu::ShaderRuntimeChecks {
+                            task_shader_dispatch_tracking: false,
+                            mesh_shader_primitive_indices_clamp: false,
+                            ..wgpu::ShaderRuntimeChecks::checked()
+                        },
+                    )
+                }
+            }
             _ => device.create_shader_module(wgpu::include_wgsl!("shader.wgsl")),
+        };
+        // MESH_ZI=0 turns off workgroup memory zero initialization (OpVariable initializers).
+        let zero_init = std::env::var("MESH_ZI").as_deref() != Ok("0");
+        if !zero_init {
+            println!("mesh_shader: workgroup zero init off");
+        }
+        let options = || wgpu::PipelineCompilationOptions {
+            zero_initialize_workgroup_memory: zero_init,
+            ..Default::default()
         };
         let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: None,
@@ -58,17 +81,17 @@ impl crate::framework::Example for Example {
             task: Some(wgpu::TaskState {
                 module: &shader,
                 entry_point: Some("ts_main"),
-                compilation_options: Default::default(),
+                compilation_options: options(),
             }),
             mesh: wgpu::MeshState {
                 module: &shader,
                 entry_point: Some("ms_main"),
-                compilation_options: Default::default(),
+                compilation_options: options(),
             },
             fragment: Some(wgpu::FragmentState {
                 module: &shader,
                 entry_point: Some("fs_main"),
-                compilation_options: Default::default(),
+                compilation_options: options(),
                 targets: &[Some(config.view_formats[0].into())],
             }),
             primitive: wgpu::PrimitiveState {
